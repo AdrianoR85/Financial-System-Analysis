@@ -5,6 +5,7 @@ from datetime import datetime, timedelta
 import pytz
 
 from utils.data import fetch_intraday, fetch_prices, PERIOD_MAP
+from utils.indicators import fetch_ticker_info
 
 # ─── CONSTANTS ────────────────────────────────────────────────────────────────
 ET = pytz.timezone("America/New_York")
@@ -107,23 +108,23 @@ def _get_xaxis_config(period: str, now_et: datetime) -> dict:
         )
 
 
-def _prepend_prev_close(series: pd.Series, now_et: datetime) -> pd.Series:
+def _prepend_prev_close(series: pd.Series, now_et: datetime, prev_close: float | None = None) -> pd.Series:
     """
-    Fills the pre-market gap (6:00 AM – 9:30 AM) with the previous day's
+    Fills the pre-market gap (6:00 AM - 9:30 AM) with the previous day's
     closing price. This avoids an empty left side on the 1D chart.
 
-    Strategy: fetch the last known close from the series itself (last point
-    before today) or use the first available intraday point as fallback,
-    then prepend two anchor points at 6:00 AM and 9:29 AM.
+    Args:
+        series:     Intraday price series for today
+        now_et:     Current time in Eastern timezone
+        prev_close: Actual previous close from yfinance info. Falls back to
+                    first intraday point if not available.
     """
-    today = now_et.date()
-
-    # Get yesterday's close — use the first intraday point as proxy
-    # (it's the closest we have without an extra API call)
-    prev_close = series.iloc[0] if not series.empty else None
-
-    if prev_close is None:
+    if series.empty:
         return series
+
+    # Use actual previous close if available, otherwise fall back to first point
+    if prev_close is None or prev_close == 0:
+        prev_close = series.iloc[0]
 
     # Two anchor points: open of pre-market (6:00 AM) and just before open (9:29 AM)
     t_600  = now_et.replace(hour=6,  minute=0,  second=0, microsecond=0)
@@ -180,19 +181,18 @@ def render_price_chart(tickers: list[str], period: str) -> None:
         manual_refresh = st.button("↻ Refresh", key="manual_refresh")
 
     # ── Auto-refresh ──────────────────────────────────────────────────────────
-    now = datetime.now()
+    now_et   = datetime.now(ET)
     if "last_refresh" not in st.session_state:
-        st.session_state["last_refresh"] = now
+        st.session_state["last_refresh"] = now_et
 
-    seconds_since = (now - st.session_state["last_refresh"]).total_seconds()
+    seconds_since = (now_et - st.session_state["last_refresh"]).total_seconds()
 
     if manual_refresh or seconds_since >= 300:
         fetch_intraday.clear()
         fetch_prices.clear()
-        st.session_state["last_refresh"] = now
+        st.session_state["last_refresh"] = now_et
 
     # ── Fetch ─────────────────────────────────────────────────────────────────
-    now_et   = datetime.now(ET)
     today_et = now_et.date()
 
     if period == "1D":
@@ -202,7 +202,7 @@ def render_price_chart(tickers: list[str], period: str) -> None:
     else:
         prices_raw = fetch_prices(tickers, PERIOD_MAP[period], interval="1d")
 
-    last_updated = st.session_state["last_refresh"].strftime("%H:%M:%S")
+    last_updated = st.session_state["last_refresh"].strftime("%H:%M:%S %Z")
     st.caption(f"Last updated: {last_updated}  ·  Source: yfinance (~15min delay)")
 
     if prices_raw.empty:
@@ -212,6 +212,13 @@ def render_price_chart(tickers: list[str], period: str) -> None:
     # ── Build figure ──────────────────────────────────────────────────────────
     fig      = go.Figure()
     has_data = False
+
+    # Pre-fetch previous close for each ticker (cached, reused from indicators)
+    prev_closes = {}
+    if period == "1D":
+        for ticker in tickers:
+            info = fetch_ticker_info(ticker)
+            prev_closes[ticker] = info.get("previousClose") or info.get("regularMarketPreviousClose")
 
     for i, ticker in enumerate(tickers):
         if ticker not in prices_raw.columns:
@@ -224,7 +231,7 @@ def render_price_chart(tickers: list[str], period: str) -> None:
             # Keep only today's candles then prepend prev close for pre-market
             series = series[series.index.date == today_et]
             if not series.empty:
-                series = _prepend_prev_close(series, now_et)
+                series = _prepend_prev_close(series, now_et, prev_closes.get(ticker))
 
         if series.empty:
             continue

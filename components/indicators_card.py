@@ -135,9 +135,19 @@ def _ticker_card(ticker: str, color: str, period: str, quarterly: bool) -> None:
     # P/L and P/VP: use trailing values from info (more reliable than calculated)
     pl_val   = info.get("trailingPE")
     pvp_val  = info.get("priceToBook")
-    roe_val  = financials["roe"].iloc[-1]  if not financials["roe"].empty  else None
-    rev_val  = financials["revenue"].iloc[-1] if not financials["revenue"].empty else None
-    nd_val   = financials["net_debt_ebitda"].iloc[-1] if not financials["net_debt_ebitda"].empty else None
+
+    # Safely extract last value, handling NaN
+    def _safe_last(s: pd.Series):
+        if s.empty:
+            return None
+        val = s.iloc[-1]
+        if pd.isna(val):
+            return None
+        return val
+
+    roe_val  = _safe_last(financials["roe"])
+    rev_val  = _safe_last(financials["revenue"])
+    nd_val   = _safe_last(financials["net_debt_ebitda"])
 
     # Build P/L and P/VP sparklines from financials (calculated historically)
     # Fall back to empty if not available

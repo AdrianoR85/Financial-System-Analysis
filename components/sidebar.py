@@ -1,6 +1,32 @@
 import streamlit as st
 from utils.data import load_tickers, fetch_prices, best_worst, PERIOD_MAP
 
+# ─── Best/worst needs enough daily data points to compute a return.
+# For very short periods (1D, 5D), yfinance may return only 1-2 daily rows,
+# so we map them to a wider window for the best/worst calculation only.
+_BEST_WORST_PERIOD = {
+    "1D":  "1mo",   # Need at least 2 daily data points
+    "5D":  "1mo",
+    "10D": "1mo",
+    "1M":  "1mo",
+    "3M":  "3mo",
+    "6M":  "6mo",
+    "1Y":  "1y",
+    "5Y":  "5y",
+    "10Y": "10y",
+}
+_BEST_WORST_ROWS = {
+    "1D":  2,
+    "5D":  5,
+    "10D": 10,
+    "1M":  21,
+    "3M":  63,
+    "6M":  126,
+    "1Y":  252,
+    "5Y":  1260,
+    "10Y": 2520,
+}
+
 # ─── PERIOD BUTTON ROWS ───────────────────────────────────────────────────────
 # Groups the period labels into rows of 3 for the grid layout
 PERIOD_ROWS = [
@@ -103,7 +129,12 @@ def render_sidebar() -> tuple[list[str], str]:
         )
 
         if selected_tickers:
-            prices = fetch_prices(selected_tickers, PERIOD_MAP[selected_period])
+            bw_period = _BEST_WORST_PERIOD[selected_period]
+            bw_rows   = _BEST_WORST_ROWS[selected_period]
+            prices = fetch_prices(selected_tickers, bw_period, interval="1d")
+            # Trim to the correct number of trading days for the selected period
+            if not prices.empty:
+                prices = prices.tail(bw_rows)
             best, worst = best_worst(prices)
         else:
             best, worst = "—", "—"
