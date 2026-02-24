@@ -54,6 +54,7 @@ else:
     render_indicators(
         tickers=selected_tickers,
         period=selected_period,
+        quarterly=False,   # default; overridden by the toggle inside the component
     )
 
     st.divider()
@@ -62,4 +63,3 @@ else:
         tickers=selected_tickers,
         period=selected_period,
     )
-

@@ -146,7 +146,11 @@ def fetch_prices(tickers: list[str], period: str, interval: str = "1d") -> pd.Da
 
 
 def best_worst(prices: pd.DataFrame) -> tuple[str, str]:
-    """Returns (best, worst) ticker based on period return."""
+    """
+    Returns (best, worst) ticker based on period return:
+    (last_price / first_price - 1).
+    If only 1 ticker is available, returns (ticker, "—").
+    """
     if prices.empty or prices.shape[1] < 1:
         return "—", "—"
 
