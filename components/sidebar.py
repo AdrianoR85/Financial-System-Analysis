@@ -1,32 +1,6 @@
 import streamlit as st
 from utils.data import load_tickers, fetch_prices, best_worst, PERIOD_MAP
 
-# ─── Best/worst needs enough daily data points to compute a return.
-# For very short periods (1D, 5D), yfinance may return only 1-2 daily rows,
-# so we map them to a wider window for the best/worst calculation only.
-_BEST_WORST_PERIOD = {
-    "1D":  "1mo",   # Need at least 2 daily data points
-    "5D":  "1mo",
-    "10D": "1mo",
-    "1M":  "1mo",
-    "3M":  "3mo",
-    "6M":  "6mo",
-    "1Y":  "1y",
-    "5Y":  "5y",
-    "10Y": "10y",
-}
-_BEST_WORST_ROWS = {
-    "1D":  2,
-    "5D":  5,
-    "10D": 10,
-    "1M":  21,
-    "3M":  63,
-    "6M":  126,
-    "1Y":  252,
-    "5Y":  1260,
-    "10Y": 2520,
-}
-
 # ─── PERIOD BUTTON ROWS ───────────────────────────────────────────────────────
 # Groups the period labels into rows of 3 for the grid layout
 PERIOD_ROWS = [
@@ -51,7 +25,7 @@ def render_sidebar() -> tuple[list[str], str]:
     with st.sidebar:
 
         # ── Logo ─────────────────────────────────────────────────────────────
-        st.title("## 📈 Stock Analysis")
+        st.markdown("## 📈 Stock Analysis")
         st.divider()
 
         # ── Ticker selector ───────────────────────────────────────────────────
@@ -78,15 +52,15 @@ def render_sidebar() -> tuple[list[str], str]:
             <style>
                 /* Shrink sidebar buttons */
                 section[data-testid="stSidebar"] .stButton > button {
-                    padding: 2px 2px !important;
-                    font-size: 8px !important;
+                    padding: 2px 4px !important;
+                    font-size: 11px !important;
                     min-height: 0 !important;
-                    height: 24px !important;
+                    height: 26px !important;
                     line-height: 1 !important;
                 }
                 /* Reduce gaps between sidebar elements */
                 section[data-testid="stSidebar"] .block-container {
-                    gap: 4px !important;
+                    gap: 0 !important;
                 }
                 section[data-testid="stSidebar"] div[data-testid="stVerticalBlock"] {
                     gap: 4px !important;
@@ -97,7 +71,7 @@ def render_sidebar() -> tuple[list[str], str]:
         )
 
         st.markdown(
-            "<p style='margin:20px 0 20px;font-size:16px;font-weight:600;'>Period</p>",
+            "<p style='margin:16px 0 20px;font-size:14px;font-weight:600;'>Period</p>",
             unsafe_allow_html=True,
         )
 
@@ -122,5 +96,26 @@ def render_sidebar() -> tuple[list[str], str]:
 
         selected_period: str = st.session_state["period"]
 
+        # ── Viewing Ticker selector ───────────────────────────────────────────
+        st.markdown(
+            "<p style='margin:20px 0 20px;font-size:14px;font-weight:600;'>Viewing Ticker</p>",
+            unsafe_allow_html=True,
+        )
+
+        if selected_tickers:
+            if "hist_sel" not in st.session_state or st.session_state["hist_sel"] not in selected_tickers:
+                st.session_state["hist_sel"] = selected_tickers[0]
+
+            st.selectbox(
+                "viewing_ticker",
+                options=selected_tickers,
+                key="hist_sel",
+                label_visibility="collapsed",
+            )
+        else:
+            st.markdown(
+                "<p style='font-size:12px;color:#5a6a90;'>No tickers selected</p>",
+                unsafe_allow_html=True,
+            )
 
     return selected_tickers, selected_period
