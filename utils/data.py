@@ -6,7 +6,7 @@ import streamlit as st
 PERIOD_MAP = {
     "1D":  "1d",
     "5D":  "5d",
-    "10D": "10d",
+    "10D": "1mo",    # yfinance doesn't support "10d"; use "1mo" which covers ~21 trading days
     "1M":  "1mo",
     "3M":  "3mo",
     "6M":  "6mo",
@@ -142,6 +142,7 @@ def best_worst(prices: pd.DataFrame) -> tuple[str, str]:
     """
     Returns (best, worst) ticker based on period return:
     (last_price / first_price - 1).
+    If only 1 ticker is available, returns (ticker, "—").
     """
     if prices.empty or prices.shape[1] < 1:
         return "—", "—"
@@ -150,5 +151,8 @@ def best_worst(prices: pd.DataFrame) -> tuple[str, str]:
 
     if returns.empty:
         return "—", "—"
+
+    if len(returns) == 1:
+        return returns.index[0], "—"
 
     return returns.idxmax(), returns.idxmin()

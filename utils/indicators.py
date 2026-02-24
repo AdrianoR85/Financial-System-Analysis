@@ -154,7 +154,7 @@ def fetch_financials(ticker: str, quarterly: bool = False) -> dict[str, pd.Serie
             if pl_vals:
                 result["pl"] = pd.Series(pl_vals).sort_index()
 
-        # ── P/VP sparkline ────────────────────────────────────────────────────
+        # ── P/VP sparkline ──────────────────────────────────────────��─────────
         # P/VP = Price / BVPS,  where BVPS = Equity / Shares per period
         if not equity.empty and not shares_series.empty and not result["price"].empty:
             eq, sh = equity.align(shares_series, join="inner")
@@ -228,10 +228,13 @@ def slice_sparkline(series: pd.Series, period: str, quarterly: bool) -> pd.Serie
 
     n = SPARKLINE_PERIODS.get(period, 1)
 
-    # Annual data has fewer points — scale accordingly
+    # Annual data has fewer points — ensure we always request at least 2
+    # so sparklines appear whenever there is enough historical data.
     if not quarterly:
-        # Annual: n already maps to years; for short periods, use at least 2
-        n = max(n, 2) if period not in ("1D", "5D", "10D", "1M", "3M") else 1
+        n = max(n, 2)
+    else:
+        # Quarterly: for short periods, still try to show at least 2 data points
+        n = max(n, 2)
 
     sliced = series.sort_index().tail(n)
     return sliced if len(sliced) >= 2 else pd.Series(dtype=float)

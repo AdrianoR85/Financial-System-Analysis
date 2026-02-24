@@ -41,7 +41,6 @@ st.markdown(
 selected_tickers, selected_period = render_sidebar()
 
 # ─── MAIN CONTENT ─────────────────────────────────────────────────────────────
-st.title("Stock Dashboard")
 
 if not selected_tickers:
     st.info("👈 Select at least one ticker in the sidebar to get started.")
@@ -55,7 +54,6 @@ else:
     render_indicators(
         tickers=selected_tickers,
         period=selected_period,
-        quarterly=False,   # default; overridden by the toggle inside the component
     )
 
     st.divider()
