@@ -122,59 +122,5 @@ def render_sidebar() -> tuple[list[str], str]:
 
         selected_period: str = st.session_state["period"]
 
-        # ── Best / Worst cards ────────────────────────────────────────────────
-        st.markdown(
-            "<p style='margin:20px 0 20px;font-size:16px;font-weight:500;'>Performance</p>",
-            unsafe_allow_html=True,
-        )
-
-        if selected_tickers:
-            bw_period = _BEST_WORST_PERIOD[selected_period]
-            bw_rows   = _BEST_WORST_ROWS[selected_period]
-            prices = fetch_prices(selected_tickers, bw_period, interval="1d")
-            # Trim to the correct number of trading days for the selected period
-            if not prices.empty:
-                prices = prices.tail(bw_rows)
-            best, worst = best_worst(prices)
-        else:
-            best, worst = "—", "—"
-
-        col_b, col_w = st.columns(2)
-
-        with col_b:
-            st.markdown(
-                f"""
-                <div style="background:#1a2e1a;border:1px solid #2d5a2d;border-radius:8px;
-                            padding:8px 6px;text-align:center;">
-                    <div style="font-size:9px;color:#5a8a5a;
-                                text-transform:uppercase;letter-spacing:1px;">
-                        Best Stock
-                    </div>
-                    <div style="font-size:18px;font-weight:600;color:#4fc98e;
-                                font-family:monospace;margin-top:2px;">
-                        {best}
-                    </div>
-                </div>
-                """,
-                unsafe_allow_html=True,
-            )
-
-        with col_w:
-            st.markdown(
-                f"""
-                <div style="background:#2e1a1a;border:1px solid #5a2d2d;border-radius:8px;
-                            padding:8px 6px;text-align:center;">
-                    <div style="font-size:9px;color:#8a5a5a;
-                                text-transform:uppercase;letter-spacing:1px;">
-                        Worst Stock
-                    </div>
-                    <div style="font-size:18px;font-weight:600;color:#f05a3d;
-                                font-family:monospace;margin-top:2px;">
-                        {worst}
-                    </div>
-                </div>
-                """,
-                unsafe_allow_html=True,
-            )
 
     return selected_tickers, selected_period
