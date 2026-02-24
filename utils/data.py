@@ -32,48 +32,37 @@ INTERVAL_MAP = {
 def load_tickers(path: str = "data/sp500.csv") -> pd.DataFrame:
     """Loads the S&P 500 ticker list from a local CSV file."""
     df = pd.read_csv(path)
-    col_map = {c.lower(): c for c in df.columns}
+    col_map    = {c.lower(): c for c in df.columns}
     ticker_col = col_map.get("symbol") or col_map.get("ticker")
-
     if ticker_col is None:
         st.error("CSV must have a column named 'Symbol' or 'Ticker'.")
         st.stop()
-
     df = df.rename(columns={ticker_col: "Ticker"})
     df["Ticker"] = df["Ticker"].str.strip().str.upper()
     return df
 
 
-def _download_single(ticker: str, period: str, interval: str) -> "pd.Series | None":
+def _yf_download(ticker: str, period: str, interval: str) -> "pd.DataFrame | None":
     """
-    Downloads Close prices for a single ticker via yfinance.
-    Tries multiple approaches to handle yfinance API variations.
-    Returns a named pd.Series or None if no data is available.
+    Download helper that handles both old and new yfinance APIs.
+    Returns a flat DataFrame or None.
     """
     raw = None
-
-    # Attempt 1: modern API with multi_level_index=False
+    # Try new API first (yfinance >= 0.2.40)
     try:
         raw = yf.download(
-            ticker,
-            period=period,
-            interval=interval,
-            auto_adjust=True,
-            progress=False,
-            multi_level_index=False,
+            ticker, period=period, interval=interval,
+            auto_adjust=True, progress=False, multi_level_index=False,
         )
-    except Exception:
+    except TypeError:
         pass
 
-    # Attempt 2: legacy API without multi_level_index
+    # Fallback to old API
     if raw is None or raw.empty:
         try:
             raw = yf.download(
-                ticker,
-                period=period,
-                interval=interval,
-                auto_adjust=True,
-                progress=False,
+                ticker, period=period, interval=interval,
+                auto_adjust=True, progress=False,
             )
         except Exception:
             return None
@@ -81,20 +70,29 @@ def _download_single(ticker: str, period: str, interval: str) -> "pd.Series | No
     if raw is None or raw.empty:
         return None
 
-    # Flatten MultiIndex columns if present
+    # Flatten MultiIndex columns
     if isinstance(raw.columns, pd.MultiIndex):
-        raw.columns = [
-            col[0] if isinstance(col, tuple) else col
-            for col in raw.columns
-        ]
+        raw.columns = [c[0] if isinstance(c, tuple) else c for c in raw.columns]
 
-    # Try to get Close column
-    for col_name in ["Close", "close", "Adj Close"]:
-        if col_name in raw.columns:
-            series = raw[col_name]
-            if isinstance(series, pd.DataFrame):
-                series = series.iloc[:, 0]
-            return series.rename(ticker)
+    return raw
+
+
+def _download_single(ticker: str, period: str, interval: str) -> "pd.Series | None":
+    """
+    Downloads Close prices for a single ticker.
+    Returns a named pd.Series or None.
+    """
+    raw = _yf_download(ticker, period, interval)
+    if raw is None:
+        return None
+
+    for col in ["Close", "close", "Adj Close"]:
+        if col in raw.columns:
+            s = raw[col]
+            if isinstance(s, pd.DataFrame):
+                s = s.iloc[:, 0]
+            s = s.dropna()
+            return s.rename(ticker) if not s.empty else None
 
     return None
 
@@ -102,8 +100,8 @@ def _download_single(ticker: str, period: str, interval: str) -> "pd.Series | No
 @st.cache_data(ttl=300)
 def fetch_intraday(tickers: list[str]) -> pd.DataFrame:
     """
-    Downloads today's intraday data at 5-minute intervals.
-    Falls back to 2-day period if 1d returns empty (common on Streamlit Cloud).
+    Downloads intraday (5min) data.
+    Tries period='1d' first; falls back to '2d' if empty (Streamlit Cloud issue).
     Cached for 5 minutes.
     """
     if not tickers:
@@ -112,8 +110,8 @@ def fetch_intraday(tickers: list[str]) -> pd.DataFrame:
     series_list = []
     for ticker in tickers:
         s = _download_single(ticker, period="1d", interval="5m")
-        # Fallback: try 2d if 1d is empty (timezone edge cases on cloud)
         if s is None or s.empty:
+            # Fallback: 2d window catches today's data even with tz edge cases
             s = _download_single(ticker, period="2d", interval="5m")
         if s is not None and not s.empty:
             series_list.append(s)
@@ -127,7 +125,7 @@ def fetch_intraday(tickers: list[str]) -> pd.DataFrame:
 @st.cache_data(ttl=300)
 def fetch_prices(tickers: list[str], period: str, interval: str = "1d") -> pd.DataFrame:
     """
-    Downloads closing prices for a given period and interval via yfinance.
+    Downloads closing prices for a given period and interval.
     Cached for 5 minutes.
     """
     if not tickers:
@@ -146,17 +144,10 @@ def fetch_prices(tickers: list[str], period: str, interval: str = "1d") -> pd.Da
 
 
 def best_worst(prices: pd.DataFrame) -> tuple[str, str]:
-    """
-    Returns (best, worst) ticker based on period return:
-    (last_price / first_price - 1).
-    If only 1 ticker is available, returns (ticker, "—").
-    """
+    """Returns (best, worst) ticker based on period return."""
     if prices.empty or prices.shape[1] < 1:
         return "—", "—"
-
     returns = (prices.iloc[-1] / prices.iloc[0] - 1).dropna()
-
     if returns.empty:
         return "—", "—"
-
     return returns.idxmax(), returns.idxmin()
