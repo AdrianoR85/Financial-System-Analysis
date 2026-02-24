@@ -51,7 +51,7 @@ def render_sidebar() -> tuple[list[str], str]:
     with st.sidebar:
 
         # ── Logo ─────────────────────────────────────────────────────────────
-        st.markdown("## 📈 Stock Analysis")
+        st.title("## 📈 Stock Analysis")
         st.divider()
 
         # ── Ticker selector ───────────────────────────────────────────────────

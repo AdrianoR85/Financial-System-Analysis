@@ -213,13 +213,10 @@ def render_historics(tickers: list[str], period: str) -> None:
         st.warning("No historical data available.")
         return
 
-    st.markdown("---")
-    c1, c2 = st.columns([1, 3])
-    with c1:
-        st.markdown("<div style='padding-top:6px;color:#8a9abf;font-size:12px;'>Viewing ticker:</div>", unsafe_allow_html=True)
-    with c2:
-        selected = st.selectbox("", options=tickers, label_visibility="collapsed", key="hist_sel")
-    st.markdown("---")
+    # Ticker selector lives in the sidebar (session_state["hist_sel"])
+    selected = st.session_state.get("hist_sel", tickers[0])
+    if selected not in tickers:
+        selected = tickers[0]
 
     # Row 1
     col1, col2 = st.columns(2)
