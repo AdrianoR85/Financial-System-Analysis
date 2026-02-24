@@ -97,19 +97,17 @@ def _cell(
     spark = slice_sparkline(series, period, quarterly) if not series.empty else pd.Series(dtype=float)
 
     # ── Header block ──────────────────────────────────────────────────────────
-    st.markdown(
-        f"""
-        <div style="background:#1b2030;border:1px solid #2c3550;
-                    border-radius:6px;padding:8px 10px 6px;margin-bottom:0px;">
-            <div style="font-size:9px;color:#5a6a90;text-transform:uppercase;
-                        letter-spacing:1px;margin-bottom:3px;">{label}</div>
-            <div style="font-size:13px;font-weight:700;color:#dce6f5;
-                        font-family:monospace;">{value_str}</div>
-            {extra_html}
-        </div>
-        """,
-        unsafe_allow_html=True,
+    cell_html = (
+        '<div style="background:#1b2030;border:1px solid #2c3550;'
+        'border-radius:6px;padding:8px 10px 6px;margin-bottom:0px;">'
+        f'<div style="font-size:9px;color:#5a6a90;text-transform:uppercase;'
+        f'letter-spacing:1px;margin-bottom:3px;">{label}</div>'
+        f'<div style="font-size:13px;font-weight:700;color:#dce6f5;'
+        f'font-family:monospace;">{value_str}</div>'
+        f'{extra_html}'
+        '</div>'
     )
+    st.markdown(cell_html, unsafe_allow_html=True)
 
     # ── Sparkline or placeholder ───────────────────────────────────────────────
     if len(spark) >= 2:
@@ -155,23 +153,20 @@ def _ticker_card(ticker: str, color: str, period: str, quarterly: bool) -> None:
     pvp_series = financials.get("pvp", pd.Series(dtype=float))
 
     # ── Ticker header ──────────────────────────────────────────────────────────
-    st.markdown(
-        f"""
-        <div style="font-family:monospace;font-size:14px;font-weight:700;
-                    color:{color};padding:4px 0 8px;
-                    border-bottom:1px solid #2c3550;margin-bottom:10px;">
-            {ticker}
-        </div>
-        """,
-        unsafe_allow_html=True,
+    header_html = (
+        f'<div style="font-family:monospace;font-size:14px;font-weight:700;'
+        f'color:{color};padding:4px 0 8px;'
+        f'border-bottom:1px solid #2c3550;margin-bottom:10px;">'
+        f'{ticker}</div>'
     )
+    st.markdown(header_html, unsafe_allow_html=True)
 
     col1, col2 = st.columns(2)
 
     # ── Price cell: label + pct on same row, value below ─────────────────────
     up        = price_data["up"]
     pct       = price_data["pct"]
-    arrow     = "▲" if up else "▼"
+    arrow     = "&#9650;" if up else "&#9660;"
     chg_color = "#4fc98e" if up else "#f05a3d"
     price_str = f"${price_data['price']:.2f}" if price_data["price"] else "--"
     pct_str   = f"{arrow} {abs(pct):.2f}%" if price_data["price"] else ""
@@ -179,26 +174,21 @@ def _ticker_card(ticker: str, color: str, period: str, quarterly: bool) -> None:
 
     with col1:
         # Render price cell manually so label and pct share the same row
-        st.markdown(
-            f"""
-            <div style="background:#1b2030;border:1px solid #2c3550;
-                        border-radius:6px;padding:8px 10px 6px;margin-bottom:0px;">
-                <div style="display:flex;justify-content:space-between;
-                            align-items:center;margin-bottom:3px;">
-                    <span style="font-size:9px;color:#5a6a90;
-                                 text-transform:uppercase;letter-spacing:1px;">
-                        Price
-                    </span>
-                    <span style="font-size:9px;font-weight:600;color:{chg_color};">
-                        {pct_str}
-                    </span>
-                </div>
-                <div style="font-size:13px;font-weight:700;color:#dce6f5;
-                            font-family:monospace;">{price_str}</div>
-            </div>
-            """,
-            unsafe_allow_html=True,
+        price_html = (
+            '<div style="background:#1b2030;border:1px solid #2c3550;'
+            'border-radius:6px;padding:8px 10px 6px;margin-bottom:0px;">'
+            '<div style="display:flex;justify-content:space-between;'
+            'align-items:center;margin-bottom:3px;">'
+            '<span style="font-size:9px;color:#5a6a90;'
+            'text-transform:uppercase;letter-spacing:1px;">Price</span>'
+            f'<span style="font-size:9px;font-weight:600;color:{chg_color};">'
+            f'{pct_str}</span>'
+            '</div>'
+            f'<div style="font-size:13px;font-weight:700;color:#dce6f5;'
+            f'font-family:monospace;">{price_str}</div>'
+            '</div>'
         )
+        st.markdown(price_html, unsafe_allow_html=True)
         price_spark = slice_sparkline(
             financials.get("price", pd.Series(dtype=float)), period, quarterly
         )
