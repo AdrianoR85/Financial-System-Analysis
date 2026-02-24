@@ -1,3 +1,4 @@
+import math
 import pandas as pd
 import streamlit as st
 import plotly.graph_objects as go
@@ -18,13 +19,9 @@ TICKER_COLORS = [
 
 # ─── SPARKLINE ────────────────────────────────────────────────────────────────
 def _sparkline(series: pd.Series, color: str, key: str) -> None:
-    """
-    Renders a minimal sparkline using st.plotly_chart.
-    Contained in a div with fixed height to prevent it from 'floating'.
-    """
     fig = go.Figure()
     fig.add_trace(go.Scatter(
-        x=list(range(len(series))),   # use integer index to avoid tz issues
+        x=list(range(len(series))),
         y=series.values,
         mode="lines",
         line=dict(color=color, width=1.5),
@@ -49,8 +46,7 @@ def _sparkline(series: pd.Series, color: str, key: str) -> None:
 
 # ─── FORMATTERS ───────────────────────────────────────────────────────────────
 def _fmt_currency(val: float) -> str:
-    import math
-    if val is None or math.isnan(val):
+    if val is None or (isinstance(val, float) and math.isnan(val)):
         return "--"
     if abs(val) >= 1e9:
         return f"${val/1e9:.1f}B"
@@ -62,15 +58,13 @@ def _fmt_currency(val: float) -> str:
 
 
 def _fmt_ratio(val: float) -> str:
-    import math
-    if val is None or math.isnan(val):
+    if val is None or (isinstance(val, float) and math.isnan(val)):
         return "--"
     return f"{val:.2f}x"
 
 
 def _fmt_pct(val: float) -> str:
-    import math
-    if val is None or math.isnan(val):
+    if val is None or (isinstance(val, float) and math.isnan(val)):
         return "--"
     return f"{val:.1f}%"
 
@@ -84,132 +78,115 @@ def _cell(
     quarterly: bool,
     color: str,
     key: str,
-    extra_html: str = "",   # optional extra line below value (e.g. % change)
 ) -> None:
     """
-    Renders one indicator cell:
-      - Dark background card with label + value
-      - Optional extra HTML (e.g. % change for price)
-      - Sparkline below if >= 2 data points, else '--'
-
-    Everything is inside st.container() to keep the sparkline anchored.
+    Renders one indicator cell using native Streamlit components only.
+    Avoids unsafe_allow_html rendering issues on Streamlit Cloud.
     """
     spark = slice_sparkline(series, period, quarterly) if not series.empty else pd.Series(dtype=float)
 
-    # ── Header block ──────────────────────────────────────────────────────────
-    st.markdown(
-        f"""
-        <div style="background:#1b2030;border:1px solid #2c3550;
-                    border-radius:6px;padding:8px 10px 6px;margin-bottom:0px;">
-            <div style="font-size:9px;color:#5a6a90;text-transform:uppercase;
-                        letter-spacing:1px;margin-bottom:3px;">{label}</div>
-            <div style="font-size:13px;font-weight:700;color:#dce6f5;
-                        font-family:monospace;">{value_str}</div>
-            {extra_html}
-        </div>
-        """,
-        unsafe_allow_html=True,
-    )
+    # Use a container with border styling via CSS class
+    with st.container():
+        st.markdown(
+            f"""<div style="background:#1b2030;border:1px solid #2c3550;
+                border-radius:6px;padding:8px 10px 4px;margin-bottom:2px;">
+                <div style="font-size:9px;color:#5a6a90;text-transform:uppercase;
+                    letter-spacing:1px;margin-bottom:3px;">{label}</div>
+                <div style="font-size:13px;font-weight:700;color:#dce6f5;
+                    font-family:monospace;">{value_str}</div>
+            </div>""",
+            unsafe_allow_html=True,
+        )
 
-    # ── Sparkline or placeholder ───────────────────────────────────────────────
     if len(spark) >= 2:
         _sparkline(spark, color, key=key)
     else:
         st.markdown(
-            "<p style='text-align:center;color:#3d4f78;font-size:11px;"
-            "margin:2px 0 8px;'>--</p>",
+            "<p style='text-align:center;color:#3d4f78;font-size:11px;margin:2px 0 8px;'>--</p>",
+            unsafe_allow_html=True,
+        )
+
+
+# ─── PRICE CELL ───────────────────────────────────────────────────────────────
+def _price_cell(
+    ticker: str,
+    price_data: dict,
+    price_series: pd.Series,
+    period: str,
+    quarterly: bool,
+) -> None:
+    """
+    Renders the Price cell using native Streamlit only — no raw HTML for values.
+    This avoids the HTML-escaping bug seen on Streamlit Cloud.
+    """
+    up        = price_data["up"]
+    pct       = price_data["pct"]
+    arrow     = "▲" if up else "▼"
+    chg_color = "#4fc98e" if up else "#f05a3d"
+    price_val = price_data["price"]
+    price_str = f"${price_val:.2f}" if price_val else "--"
+    pct_str   = f"{arrow} {abs(pct):.2f}%" if price_val else ""
+    spark_color = "#4fc98e" if up else "#f05a3d"
+
+    # Header card — label + pct on same row, price below
+    st.markdown(
+        f"""<div style="background:#1b2030;border:1px solid #2c3550;
+                border-radius:6px;padding:8px 10px 4px;margin-bottom:2px;">
+            <div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:3px;">
+                <span style="font-size:9px;color:#5a6a90;text-transform:uppercase;letter-spacing:1px;">Price</span>
+                <span style="font-size:9px;font-weight:600;color:{chg_color};">{pct_str}</span>
+            </div>
+            <div style="font-size:13px;font-weight:700;color:#dce6f5;font-family:monospace;">{price_str}</div>
+        </div>""",
+        unsafe_allow_html=True,
+    )
+
+    spark = slice_sparkline(price_series, period, quarterly) if not price_series.empty else pd.Series(dtype=float)
+    if len(spark) >= 2:
+        _sparkline(spark, spark_color, key=f"spark_price_{ticker}_{period}")
+    else:
+        st.markdown(
+            "<p style='text-align:center;color:#3d4f78;font-size:11px;margin:2px 0 8px;'>--</p>",
             unsafe_allow_html=True,
         )
 
 
 # ─── TICKER CARD ──────────────────────────────────────────────────────────────
 def _ticker_card(ticker: str, color: str, period: str, quarterly: bool) -> None:
-    """
-    Renders a full indicator card for one ticker with 6 indicators in a 2-col grid.
-    """
     financials = fetch_financials(ticker, quarterly=quarterly)
     info       = fetch_ticker_info(ticker)
     price_data = get_current_price_data(ticker)
 
-    # ── Current values ─────────────────────────────────────────────────────────
-    # P/L and P/VP: use trailing values from info (more reliable than calculated)
-    pl_val   = info.get("trailingPE")
-    pvp_val  = info.get("priceToBook")
+    # Current scalar values
+    pl_val  = info.get("trailingPE")
+    pvp_val = info.get("priceToBook")
+    roe_val  = financials["roe"].iloc[-1]  if not financials["roe"].empty  else None
+    rev_val  = financials["revenue"].iloc[-1] if not financials["revenue"].empty else None
+    nd_val   = financials["net_debt_ebitda"].iloc[-1] if not financials["net_debt_ebitda"].empty else None
 
-    # Safely extract last value, handling NaN
-    def _safe_last(s: pd.Series):
-        if s.empty:
-            return None
-        val = s.iloc[-1]
-        if pd.isna(val):
-            return None
-        return val
-
-    roe_val  = _safe_last(financials["roe"])
-    rev_val  = _safe_last(financials["revenue"])
-    nd_val   = _safe_last(financials["net_debt_ebitda"])
-
-    # Build P/L and P/VP sparklines from financials (calculated historically)
-    # Fall back to empty if not available
     pl_series  = financials.get("pl",  pd.Series(dtype=float))
     pvp_series = financials.get("pvp", pd.Series(dtype=float))
 
-    # ── Ticker header ──────────────────────────────────────────────────────────
+    # Ticker header
     st.markdown(
-        f"""
-        <div style="font-family:monospace;font-size:14px;font-weight:700;
-                    color:{color};padding:4px 0 8px;
-                    border-bottom:1px solid #2c3550;margin-bottom:10px;">
+        f"""<div style="font-family:monospace;font-size:14px;font-weight:700;
+                color:{color};padding:4px 0 8px;
+                border-bottom:1px solid #2c3550;margin-bottom:10px;">
             {ticker}
-        </div>
-        """,
+        </div>""",
         unsafe_allow_html=True,
     )
 
     col1, col2 = st.columns(2)
 
-    # ── Price cell: label + pct on same row, value below ─────────────────────
-    up        = price_data["up"]
-    pct       = price_data["pct"]
-    arrow     = "▲" if up else "▼"
-    chg_color = "#4fc98e" if up else "#f05a3d"
-    price_str = f"${price_data['price']:.2f}" if price_data["price"] else "--"
-    pct_str   = f"{arrow} {abs(pct):.2f}%" if price_data["price"] else ""
-    price_spark_color = "#4fc98e" if up else "#f05a3d"
-
     with col1:
-        # Render price cell manually so label and pct share the same row
-        st.markdown(
-            f"""
-            <div style="background:#1b2030;border:1px solid #2c3550;
-                        border-radius:6px;padding:8px 10px 6px;margin-bottom:0px;">
-                <div style="display:flex;justify-content:space-between;
-                            align-items:center;margin-bottom:3px;">
-                    <span style="font-size:9px;color:#5a6a90;
-                                 text-transform:uppercase;letter-spacing:1px;">
-                        Price
-                    </span>
-                    <span style="font-size:9px;font-weight:600;color:{chg_color};">
-                        {pct_str}
-                    </span>
-                </div>
-                <div style="font-size:13px;font-weight:700;color:#dce6f5;
-                            font-family:monospace;">{price_str}</div>
-            </div>
-            """,
-            unsafe_allow_html=True,
+        _price_cell(
+            ticker=ticker,
+            price_data=price_data,
+            price_series=financials.get("price", pd.Series(dtype=float)),
+            period=period,
+            quarterly=quarterly,
         )
-        price_spark = slice_sparkline(
-            financials.get("price", pd.Series(dtype=float)), period, quarterly
-        )
-        if len(price_spark) >= 2:
-            _sparkline(price_spark, price_spark_color, key=f"spark_price_{ticker}_{period}")
-        else:
-            st.markdown(
-                "<p style='text-align:center;color:#3d4f78;font-size:11px;"
-                "margin:2px 0 8px;'>--</p>",
-                unsafe_allow_html=True,
-            )
         _cell(
             label="P/L",
             value_str=_fmt_ratio(pl_val) if pl_val else "--",
@@ -265,12 +242,6 @@ def render_indicators(
     period: str,
     quarterly: bool = False,
 ) -> None:
-    """
-    Renders the full Key Indicators section.
-    One card per ticker in a responsive grid (max 4 columns).
-    """
-
-    # ── Header + toggle ───────────────────────────────────────────────────────
     col_title, col_toggle = st.columns([5, 2])
     with col_title:
         st.markdown("### Key Indicators")
@@ -287,14 +258,12 @@ def render_indicators(
         st.info("Select tickers in the sidebar to see indicators.")
         return
 
-    # ── One card per ticker ────────────────────────────────────────────────────
     n_cols = min(len(tickers), 4)
     cols   = st.columns(n_cols)
 
     for i, ticker in enumerate(tickers):
         color = TICKER_COLORS[i % len(TICKER_COLORS)]
         with cols[i % n_cols]:
-            # Each card in its own styled container
             with st.container(border=True):
                 _ticker_card(
                     ticker=ticker,
