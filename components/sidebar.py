@@ -96,27 +96,28 @@ def render_sidebar() -> tuple[list[str], str]:
 
         selected_period: str = st.session_state["period"]
 
-        # ── Viewing tickers ────────────────────────────────────────────────────
-        st.markdown(
-            "<p style='margin:20px 0 10px;font-size:16px;font-weight:500;'>Viewing</p>",
-            unsafe_allow_html=True,
-        )
-
-        if selected_tickers:
-            ticker_tags = "".join(
-                f"<span style='display:inline-block;background:#1e293b;border:1px solid #334155;"
-                f"border-radius:6px;padding:4px 10px;margin:3px 4px 3px 0;font-size:13px;"
-                f"font-weight:500;color:#e2e8f0;font-family:monospace;'>{t}</span>"
-                for t in selected_tickers
-            )
+        # ── Viewing ticker ─────────────────────────────────────────────────────
+        st.markdown("---")
+        col_lbl, col_sel = st.columns([1, 2])
+        with col_lbl:
             st.markdown(
-                f"<div style='display:flex;flex-wrap:wrap;'>{ticker_tags}</div>",
+                "<div style='padding-top:6px;color:#8a9abf;font-size:12px;'>Viewing ticker:</div>",
                 unsafe_allow_html=True,
             )
-        else:
-            st.markdown(
-                "<span style='color:#64748b;font-size:13px;'>No tickers selected</span>",
-                unsafe_allow_html=True,
-            )
+        with col_sel:
+            if selected_tickers:
+                st.selectbox(
+                    "Viewing ticker",
+                    options=selected_tickers,
+                    key="sidebar_viewing_ticker",
+                    label_visibility="collapsed",
+                )
+            else:
+                st.selectbox(
+                    "Viewing ticker",
+                    options=["—"],
+                    disabled=True,
+                    label_visibility="collapsed",
+                )
 
     return selected_tickers, selected_period
