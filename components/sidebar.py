@@ -1,31 +1,5 @@
 import streamlit as st
-from utils.data import load_tickers, fetch_prices, best_worst, PERIOD_MAP
-
-# ─── Best/worst needs enough daily data points to compute a return.
-# For very short periods (1D, 5D), yfinance may return only 1-2 daily rows,
-# so we map them to a wider window for the best/worst calculation only.
-_BEST_WORST_PERIOD = {
-    "1D":  "1mo",   # Need at least 2 daily data points
-    "5D":  "1mo",
-    "10D": "1mo",
-    "1M":  "1mo",
-    "3M":  "3mo",
-    "6M":  "6mo",
-    "1Y":  "1y",
-    "5Y":  "5y",
-    "10Y": "10y",
-}
-_BEST_WORST_ROWS = {
-    "1D":  2,
-    "5D":  5,
-    "10D": 10,
-    "1M":  21,
-    "3M":  63,
-    "6M":  126,
-    "1Y":  252,
-    "5Y":  1260,
-    "10Y": 2520,
-}
+from utils.data import load_tickers, PERIOD_MAP
 
 # ─── PERIOD BUTTON ROWS ───────────────────────────────────────────────────────
 # Groups the period labels into rows of 3 for the grid layout
@@ -122,58 +96,26 @@ def render_sidebar() -> tuple[list[str], str]:
 
         selected_period: str = st.session_state["period"]
 
-        # ── Best / Worst cards ────────────────────────────────────────────────
+        # ── Viewing tickers ────────────────────────────────────────────────────
         st.markdown(
-            "<p style='margin:20px 0 20px;font-size:16px;font-weight:500;'>Performance</p>",
+            "<p style='margin:20px 0 10px;font-size:16px;font-weight:500;'>Viewing</p>",
             unsafe_allow_html=True,
         )
 
         if selected_tickers:
-            bw_period = _BEST_WORST_PERIOD[selected_period]
-            bw_rows   = _BEST_WORST_ROWS[selected_period]
-            prices = fetch_prices(selected_tickers, bw_period, interval="1d")
-            # Trim to the correct number of trading days for the selected period
-            if not prices.empty:
-                prices = prices.tail(bw_rows)
-            best, worst = best_worst(prices)
-        else:
-            best, worst = "—", "—"
-
-        col_b, col_w = st.columns(2)
-
-        with col_b:
+            ticker_tags = "".join(
+                f"<span style='display:inline-block;background:#1e293b;border:1px solid #334155;"
+                f"border-radius:6px;padding:4px 10px;margin:3px 4px 3px 0;font-size:13px;"
+                f"font-weight:500;color:#e2e8f0;font-family:monospace;'>{t}</span>"
+                for t in selected_tickers
+            )
             st.markdown(
-                f"""
-                <div style="background:#1a2e1a;border:1px solid #2d5a2d;border-radius:8px;
-                            padding:8px 6px;text-align:center;">
-                    <div style="font-size:9px;color:#5a8a5a;
-                                text-transform:uppercase;letter-spacing:1px;">
-                        Best Stock
-                    </div>
-                    <div style="font-size:18px;font-weight:600;color:#4fc98e;
-                                font-family:monospace;margin-top:2px;">
-                        {best}
-                    </div>
-                </div>
-                """,
+                f"<div style='display:flex;flex-wrap:wrap;'>{ticker_tags}</div>",
                 unsafe_allow_html=True,
             )
-
-        with col_w:
+        else:
             st.markdown(
-                f"""
-                <div style="background:#2e1a1a;border:1px solid #5a2d2d;border-radius:8px;
-                            padding:8px 6px;text-align:center;">
-                    <div style="font-size:9px;color:#8a5a5a;
-                                text-transform:uppercase;letter-spacing:1px;">
-                        Worst Stock
-                    </div>
-                    <div style="font-size:18px;font-weight:600;color:#f05a3d;
-                                font-family:monospace;margin-top:2px;">
-                        {worst}
-                    </div>
-                </div>
-                """,
+                "<span style='color:#64748b;font-size:13px;'>No tickers selected</span>",
                 unsafe_allow_html=True,
             )
 
