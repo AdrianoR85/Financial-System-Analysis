@@ -22,44 +22,37 @@ def _normalize_index(series: pd.Series) -> pd.Series:
     return series
 
 
-def _ticks_from_data(df: pd.DataFrame, n_days: int) -> tuple[list, list]:
+def _ticks_from_data(prices_et: pd.DataFrame, n_days: int) -> tuple[list, list]:
     """
-    Derives X-axis tick positions directly from the data index.
-    For each unique trading date in the data, places a tick at the first
-    available timestamp of that day.  This guarantees ticks match the data
-    and never skips or duplicates days.
-
-    Returns (tick_vals, tick_text) lists ready for Plotly tickvals/ticktext.
+    Derive one tick per trading day from the actual data index.
+    Picks the first timestamp of each calendar date present in the data.
     """
-    if df.empty:
+    if prices_et.empty:
         return [], []
 
-    # Collect all timestamps across all tickers, normalize to ET
-    all_idx: pd.DatetimeIndex = df.index
-    if all_idx.tz is None:
-        all_idx = all_idx.tz_localize("UTC")
-    all_idx = all_idx.tz_convert(ET)
+    idx = prices_et.index
+    if idx.tz is None:
+        idx = idx.tz_localize("UTC").tz_convert(ET)
 
-    # Group by calendar date, pick the first timestamp of each day
-    dates_seen: dict = {}
-    for ts in sorted(all_idx):
+    dates_first: dict = {}
+    for ts in idx:
         d = ts.date()
-        if d not in dates_seen:
-            dates_seen[d] = ts
+        if d not in dates_first:
+            dates_first[d] = ts
 
-    # Keep only the last n_days trading days
-    sorted_dates = sorted(dates_seen.keys())[-n_days:]
-
-    tick_vals = [dates_seen[d] for d in sorted_dates]
-    tick_text = [d.strftime("%a %-m/%-d") for d in sorted_dates]  # e.g. "Thu 2/20"
-
+    sorted_dates = sorted(dates_first.keys())[-n_days:]
+    tick_vals = [dates_first[d] for d in sorted_dates]
+    tick_text = [d.strftime("%a %-m/%-d") for d in sorted_dates]
     return tick_vals, tick_text
 
 
 def _get_xaxis_config(period: str, now_et: datetime,
-                      prices_raw: pd.DataFrame) -> dict:
-    """Returns Plotly xaxis config for the given period."""
-
+                      prices_et: pd.DataFrame) -> dict:
+    """
+    Returns Plotly xaxis config.
+    For intraday periods (1D, 5D, 10D): adds rangebreaks to hide
+    after-hours gaps and weekend gaps — just like Yahoo Finance.
+    """
     if period == "1D":
         return dict(
             tickformat="%-I %p",
@@ -69,15 +62,25 @@ def _get_xaxis_config(period: str, now_et: datetime,
                 now_et.replace(hour=9,  minute=30, second=0, microsecond=0),
                 now_et.replace(hour=16, minute=0,  second=0, microsecond=0),
             ],
+            # Hide before 9:30 AM and after 4:00 PM
+            rangebreaks=[
+                dict(bounds=["sat", "mon"]),                    # weekends
+                dict(bounds=[16, 9.5], pattern="hour"),         # after-hours
+            ],
         )
 
     elif period in ("5D", "10D"):
         n = 5 if period == "5D" else 10
-        tick_vals, tick_text = _ticks_from_data(prices_raw, n)
+        tick_vals, tick_text = _ticks_from_data(prices_et, n)
         return dict(
             tickvals=tick_vals,
             ticktext=tick_text,
             tickangle=0,
+            # Key fix: remove weekend gaps and after-hours gaps
+            rangebreaks=[
+                dict(bounds=["sat", "mon"]),            # hide Sat & Sun
+                dict(bounds=[16, 9.5], pattern="hour"), # hide outside market hours
+            ],
         )
 
     elif period == "1M":
@@ -85,6 +88,7 @@ def _get_xaxis_config(period: str, now_et: datetime,
             tickformat="%-m/%-d",
             dtick=5 * 24 * 60 * 60 * 1000,
             tickangle=0,
+            rangebreaks=[dict(bounds=["sat", "mon"])],
         )
 
     elif period == "3M":
@@ -92,13 +96,15 @@ def _get_xaxis_config(period: str, now_et: datetime,
             tickformat="%-m/%-d",
             dtick=14 * 24 * 60 * 60 * 1000,
             tickangle=0,
+            rangebreaks=[dict(bounds=["sat", "mon"])],
         )
 
     elif period == "6M":
         return dict(
-            tickformat="%b %-d",
+            tickformat="%b",
             dtick="M1",
             tickangle=0,
+            rangebreaks=[dict(bounds=["sat", "mon"])],
         )
 
     elif period == "1Y":
@@ -106,9 +112,10 @@ def _get_xaxis_config(period: str, now_et: datetime,
             tickformat="%b",
             dtick="M1",
             tickangle=0,
+            rangebreaks=[dict(bounds=["sat", "mon"])],
         )
 
-    else:  # 5Y, 10Y
+    else:  # 5Y, 10Y — weekly/monthly data, no rangebreaks needed
         return dict(
             tickformat="%Y",
             dtick="M12",
@@ -117,13 +124,12 @@ def _get_xaxis_config(period: str, now_et: datetime,
 
 
 def _prepend_prev_close(series: pd.Series, now_et: datetime) -> pd.Series:
-    """Fill pre-market gap with a flat anchor at the first available price."""
+    """Flat anchor at market open so 1D chart doesn't start mid-air."""
     if series.empty:
         return series
     prev_close = series.iloc[0]
-    t_900 = now_et.replace(hour=9,  minute=0,  second=0, microsecond=0)
-    t_929 = now_et.replace(hour=9,  minute=29, second=0, microsecond=0)
-    pre   = pd.Series([prev_close, prev_close], index=[t_900, t_929])
+    t_930 = now_et.replace(hour=9, minute=30, second=0, microsecond=0)
+    pre   = pd.Series([prev_close], index=[t_930])
     return pd.concat([pre, series])
 
 
@@ -136,8 +142,8 @@ def render_price_chart(tickers: list[str], period: str) -> None:
                 height: 20px !important; padding: 0 6px !important;
                 font-size: 11px !important; border-radius: 4px !important;
             }
-            span[data-baseweb="tag"] span { font-size: 11px !important; line-height: 20px !important; }
-            span[data-baseweb="tag"] svg  { width: 10px !important; height: 10px !important; }
+            span[data-baseweb="tag"] span { font-size:11px !important; line-height:20px !important; }
+            span[data-baseweb="tag"] svg  { width:10px !important; height:10px !important; }
         </style>
         """,
         unsafe_allow_html=True,
@@ -180,7 +186,7 @@ def render_price_chart(tickers: list[str], period: str) -> None:
         st.warning("No data available for the selected tickers and period.")
         return
 
-    # Normalize the raw DataFrame index to ET for tick calculation
+    # Normalize index to ET for tick calculation
     prices_et = prices_raw.copy()
     if prices_et.index.tz is None:
         prices_et.index = prices_et.index.tz_localize("UTC")
@@ -219,7 +225,7 @@ def render_price_chart(tickers: list[str], period: str) -> None:
         st.warning("No data available for the selected tickers and period.")
         return
 
-    # ── X axis (pass normalized df for tick derivation) ───────────────────────
+    # ── Layout ────────────────────────────────────────────────────────────────
     xaxis_cfg = _get_xaxis_config(period, now_et, prices_et)
 
     fig.update_layout(
