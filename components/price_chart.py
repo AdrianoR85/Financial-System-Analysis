@@ -22,17 +22,48 @@ def _normalize_index(series: pd.Series) -> pd.Series:
     return series
 
 
-def _get_xaxis_config(period: str, now_et: datetime) -> dict:
+def _ticks_from_data(df: pd.DataFrame, n_days: int) -> tuple[list, list]:
     """
-    Returns Plotly xaxis config matching Yahoo Finance style per period.
+    Derives X-axis tick positions directly from the data index.
+    For each unique trading date in the data, places a tick at the first
+    available timestamp of that day.  This guarantees ticks match the data
+    and never skips or duplicates days.
 
-    5D / 10D: one tick per trading day, placed at 9:30 AM, labelled "Mon 2/03".
-              No hour labels — they caused the overlap bug.
+    Returns (tick_vals, tick_text) lists ready for Plotly tickvals/ticktext.
     """
+    if df.empty:
+        return [], []
+
+    # Collect all timestamps across all tickers, normalize to ET
+    all_idx: pd.DatetimeIndex = df.index
+    if all_idx.tz is None:
+        all_idx = all_idx.tz_localize("UTC")
+    all_idx = all_idx.tz_convert(ET)
+
+    # Group by calendar date, pick the first timestamp of each day
+    dates_seen: dict = {}
+    for ts in sorted(all_idx):
+        d = ts.date()
+        if d not in dates_seen:
+            dates_seen[d] = ts
+
+    # Keep only the last n_days trading days
+    sorted_dates = sorted(dates_seen.keys())[-n_days:]
+
+    tick_vals = [dates_seen[d] for d in sorted_dates]
+    tick_text = [d.strftime("%a %-m/%-d") for d in sorted_dates]  # e.g. "Thu 2/20"
+
+    return tick_vals, tick_text
+
+
+def _get_xaxis_config(period: str, now_et: datetime,
+                      prices_raw: pd.DataFrame) -> dict:
+    """Returns Plotly xaxis config for the given period."""
+
     if period == "1D":
         return dict(
             tickformat="%-I %p",
-            dtick=60 * 60 * 1000,          # every 1 hour in ms
+            dtick=60 * 60 * 1000,
             tickangle=0,
             range=[
                 now_et.replace(hour=9,  minute=30, second=0, microsecond=0),
@@ -41,26 +72,8 @@ def _get_xaxis_config(period: str, now_et: datetime) -> dict:
         )
 
     elif period in ("5D", "10D"):
-        # One tick per trading day at 9:30 AM, label = "Mon 2/03"
-        days    = 5 if period == "5D" else 10
-        start   = now_et - timedelta(days=days + 4)   # a bit of buffer
-        start   = start.replace(hour=0, minute=0, second=0, microsecond=0)
-
-        tick_vals, tick_text = [], []
-        current = start
-        while current.date() <= now_et.date():
-            if current.weekday() < 5:                  # Mon–Fri only
-                t_open = current.replace(hour=9, minute=30, second=0, microsecond=0)
-                tick_vals.append(t_open)
-                # e.g. "Mon 2/03"
-                tick_text.append(current.strftime("%a %-m/%-d"))
-            current += timedelta(days=1)
-
-        # Keep only the last N trading days (5 or 10)
         n = 5 if period == "5D" else 10
-        tick_vals = tick_vals[-n:]
-        tick_text = tick_text[-n:]
-
+        tick_vals, tick_text = _ticks_from_data(prices_raw, n)
         return dict(
             tickvals=tick_vals,
             ticktext=tick_text,
@@ -70,14 +83,14 @@ def _get_xaxis_config(period: str, now_et: datetime) -> dict:
     elif period == "1M":
         return dict(
             tickformat="%-m/%-d",
-            dtick=5 * 24 * 60 * 60 * 1000,    # every 5 days
+            dtick=5 * 24 * 60 * 60 * 1000,
             tickangle=0,
         )
 
     elif period == "3M":
         return dict(
             tickformat="%-m/%-d",
-            dtick=14 * 24 * 60 * 60 * 1000,   # every 2 weeks
+            dtick=14 * 24 * 60 * 60 * 1000,
             tickangle=0,
         )
 
@@ -104,18 +117,18 @@ def _get_xaxis_config(period: str, now_et: datetime) -> dict:
 
 
 def _prepend_prev_close(series: pd.Series, now_et: datetime) -> pd.Series:
-    """Fill 9:00–9:29 gap with the first available price as a flat anchor."""
+    """Fill pre-market gap with a flat anchor at the first available price."""
     if series.empty:
         return series
     prev_close = series.iloc[0]
-    t_900  = now_et.replace(hour=9,  minute=0,  second=0, microsecond=0)
-    t_929  = now_et.replace(hour=9,  minute=29, second=0, microsecond=0)
-    pre    = pd.Series([prev_close, prev_close], index=[t_900, t_929])
+    t_900 = now_et.replace(hour=9,  minute=0,  second=0, microsecond=0)
+    t_929 = now_et.replace(hour=9,  minute=29, second=0, microsecond=0)
+    pre   = pd.Series([prev_close, prev_close], index=[t_900, t_929])
     return pd.concat([pre, series])
 
 
 def render_price_chart(tickers: list[str], period: str) -> None:
-    # ── CSS: smaller multiselect chips ───────────────────────────────────────
+    # ── CSS ───────────────────────────────────────────────────────────────────
     st.markdown(
         """
         <style>
@@ -138,13 +151,12 @@ def render_price_chart(tickers: list[str], period: str) -> None:
     with col_btn:
         manual_refresh = st.button("↻ Refresh", key="manual_refresh")
 
-    # ── Auto-refresh (every 5 min) ────────────────────────────────────────────
+    # ── Auto-refresh ──────────────────────────────────────────────────────────
     now = datetime.now()
     if "last_refresh" not in st.session_state:
         st.session_state["last_refresh"] = now
 
     seconds_since = (now - st.session_state["last_refresh"]).total_seconds()
-
     if manual_refresh or seconds_since >= 300:
         fetch_intraday.clear()
         fetch_prices.clear()
@@ -167,6 +179,12 @@ def render_price_chart(tickers: list[str], period: str) -> None:
     if prices_raw.empty:
         st.warning("No data available for the selected tickers and period.")
         return
+
+    # Normalize the raw DataFrame index to ET for tick calculation
+    prices_et = prices_raw.copy()
+    if prices_et.index.tz is None:
+        prices_et.index = prices_et.index.tz_localize("UTC")
+    prices_et.index = prices_et.index.tz_convert(ET)
 
     # ── Build figure ──────────────────────────────────────────────────────────
     fig      = go.Figure()
@@ -194,17 +212,15 @@ def render_price_chart(tickers: list[str], period: str) -> None:
             mode="lines",
             name=ticker,
             line=dict(color=color, width=2),
-            hovertemplate=(
-                f"<b>{ticker}</b><br>%{{x}}<br>Price: $%{{y:.2f}}<extra></extra>"
-            ),
+            hovertemplate=f"<b>{ticker}</b><br>%{{x}}<br>$%{{y:.2f}}<extra></extra>",
         ))
 
     if not has_data:
         st.warning("No data available for the selected tickers and period.")
         return
 
-    # ── X axis ────────────────────────────────────────────────────────────────
-    xaxis_cfg = _get_xaxis_config(period, now_et)
+    # ── X axis (pass normalized df for tick derivation) ───────────────────────
+    xaxis_cfg = _get_xaxis_config(period, now_et, prices_et)
 
     fig.update_layout(
         height=320,
@@ -213,8 +229,8 @@ def render_price_chart(tickers: list[str], period: str) -> None:
         plot_bgcolor="rgba(0,0,0,0)",
         font=dict(color="#8a9abf", size=11),
         legend=dict(
-            orientation="h", yanchor="bottom", y=1.02, xanchor="left", x=0,
-            bgcolor="rgba(0,0,0,0)", font=dict(size=11),
+            orientation="h", yanchor="bottom", y=1.02,
+            xanchor="left", x=0, bgcolor="rgba(0,0,0,0)", font=dict(size=11),
         ),
         xaxis=dict(
             showgrid=False, zeroline=False, title="",
