@@ -1,7 +1,7 @@
 import pandas as pd
 import streamlit as st
 import plotly.graph_objects as go
-from datetime import datetime, timedelta
+from datetime import datetime
 import pytz
 
 from utils.data import fetch_intraday, fetch_prices, PERIOD_MAP
@@ -13,9 +13,24 @@ COLORS = [
     "#c44fff", "#ff914f", "#4ff7f0", "#f74fa0",
 ]
 
+# ── Interval to use per period ─────────────────────────────────────────────────
+# IMPORTANT: yfinance "1wk" interval with period="5y" returns ALL history,
+# not just 5 years. Use "1d" for all medium/long periods and let the period
+# parameter itself limit the data.
+CHART_INTERVAL = {
+    "1D":  "5m",
+    "5D":  "5m",
+    "10D": "5m",
+    "1M":  "1d",
+    "3M":  "1d",
+    "6M":  "1d",
+    "1Y":  "1d",
+    "5Y":  "1d",   # was "1wk" — that caused all history to load
+    "10Y": "1d",   # was "1mo"
+}
+
 
 def _normalize_index(series: pd.Series) -> pd.Series:
-    """Convert series index to US/Eastern time."""
     if series.index.tz is None:
         series.index = series.index.tz_localize("UTC")
     series.index = series.index.tz_convert(ET)
@@ -23,11 +38,7 @@ def _normalize_index(series: pd.Series) -> pd.Series:
 
 
 def _ticks_from_data(prices_et: pd.DataFrame, n_days: int) -> tuple[list, list]:
-    """
-    Derive one tick per trading day from the actual data index.
-    Picks the first timestamp of each calendar date present in the data.
-    Returns only the last n_days entries.
-    """
+    """One tick per trading day, derived from actual data — no generated dates."""
     if prices_et.empty:
         return [], []
 
@@ -35,15 +46,14 @@ def _ticks_from_data(prices_et: pd.DataFrame, n_days: int) -> tuple[list, list]:
     if idx.tz is None:
         idx = idx.tz_localize("UTC").tz_convert(ET)
 
-    # Only consider market hours (9:30–16:00) to avoid pre/post-market dates
-    market_idx = idx[(idx.hour > 9) | ((idx.hour == 9) & (idx.minute >= 30))]
-    market_idx = market_idx[market_idx.hour < 16]
-
-    if len(market_idx) == 0:
-        market_idx = idx  # fallback: use all
+    # Filter to market hours to avoid pre/post-market ghost dates
+    mkt = idx[(idx.hour > 9) | ((idx.hour == 9) & (idx.minute >= 30))]
+    mkt = mkt[mkt.hour < 16]
+    if len(mkt) == 0:
+        mkt = idx
 
     dates_first: dict = {}
-    for ts in market_idx:
+    for ts in mkt:
         d = ts.date()
         if d not in dates_first:
             dates_first[d] = ts
@@ -54,16 +64,14 @@ def _ticks_from_data(prices_et: pd.DataFrame, n_days: int) -> tuple[list, list]:
     return tick_vals, tick_text
 
 
-def _get_xaxis_config(period: str, now_et: datetime,
-                      prices_et: pd.DataFrame) -> dict:
+def _get_xaxis_config(period: str, now_et: datetime, prices_et: pd.DataFrame) -> dict:
     """
-    Returns Plotly xaxis config.
-
-    IMPORTANT:
-    - rangebreaks with pattern="hour" only works correctly with intraday (5m) data.
-    - For daily data (1M, 3M, 6M, 1Y), only use bounds=["sat","mon"] — no hour breaks.
-    - For 5D/10D intraday: use rangebreaks to hide weekends only (no hour bounds,
-      because hour bounds can truncate the visible data range unexpectedly).
+    Xaxis config rules:
+    - 1D:       rangebreaks for hour + weekend. Hard range 9:30–16:00.
+    - 5D/10D:   rangebreaks for weekend only. Ticks from real data.
+                NO hour rangebreaks — they truncate 5m data unpredictably.
+    - 1M–10Y:   NO rangebreaks at all for daily data — they cause dashed lines.
+                Simple dtick/tickformat is enough.
     """
 
     if period == "1D":
@@ -84,36 +92,22 @@ def _get_xaxis_config(period: str, now_et: datetime,
     elif period in ("5D", "10D"):
         n = 5 if period == "5D" else 10
         tick_vals, tick_text = _ticks_from_data(prices_et, n)
-
-        # For 5D/10D: hide weekends but NOT hour-based breaks.
-        # Hour-based breaks on 5m data cause visual truncation when the
-        # rangebreak bounds don't align with the tz-aware timestamps.
-        # Instead, we set a hard x-range from first to last tick.
-        x_range = None
-        if tick_vals:
-            # Extend range slightly beyond last tick to show full last day
-            x_start = tick_vals[0]
-            x_end   = prices_et.index[-1] if not prices_et.empty else tick_vals[-1]
-            x_range = [x_start, x_end]
-
         cfg = dict(
             tickvals=tick_vals,
             ticktext=tick_text,
             tickangle=0,
-            rangebreaks=[
-                dict(bounds=["sat", "mon"]),  # hide weekends only
-            ],
+            rangebreaks=[dict(bounds=["sat", "mon"])],
         )
-        if x_range:
-            cfg["range"] = x_range
+        # Hard x-range: first tick → last data point
+        if tick_vals and not prices_et.empty:
+            cfg["range"] = [tick_vals[0], prices_et.index[-1]]
         return cfg
 
     elif period == "1M":
         return dict(
             tickformat="%-m/%-d",
-            dtick=7 * 24 * 60 * 60 * 1000,   # weekly ticks
+            dtick=7 * 24 * 60 * 60 * 1000,
             tickangle=0,
-            rangebreaks=[dict(bounds=["sat", "mon"])],
         )
 
     elif period == "3M":
@@ -121,7 +115,6 @@ def _get_xaxis_config(period: str, now_et: datetime,
             tickformat="%-m/%-d",
             dtick=14 * 24 * 60 * 60 * 1000,
             tickangle=0,
-            rangebreaks=[dict(bounds=["sat", "mon"])],
         )
 
     elif period == "6M":
@@ -129,7 +122,6 @@ def _get_xaxis_config(period: str, now_et: datetime,
             tickformat="%b",
             dtick="M1",
             tickangle=0,
-            rangebreaks=[dict(bounds=["sat", "mon"])],
         )
 
     elif period == "1Y":
@@ -137,10 +129,16 @@ def _get_xaxis_config(period: str, now_et: datetime,
             tickformat="%b",
             dtick="M1",
             tickangle=0,
-            rangebreaks=[dict(bounds=["sat", "mon"])],
         )
 
-    else:  # 5Y, 10Y — weekly/monthly candles, no rangebreaks needed
+    elif period == "5Y":
+        return dict(
+            tickformat="%Y",
+            dtick="M12",
+            tickangle=0,
+        )
+
+    else:  # 10Y
         return dict(
             tickformat="%Y",
             dtick="M12",
@@ -149,19 +147,15 @@ def _get_xaxis_config(period: str, now_et: datetime,
 
 
 def _prepend_prev_close(series: pd.Series, now_et: datetime) -> pd.Series:
-    """Flat anchor at market open so 1D chart doesn't start mid-air."""
     if series.empty:
         return series
-    prev_close = series.iloc[0]
     t_930 = now_et.replace(hour=9, minute=30, second=0, microsecond=0)
     if t_930 < series.index[0]:
-        pre = pd.Series([prev_close], index=[t_930])
-        return pd.concat([pre, series])
+        return pd.concat([pd.Series([series.iloc[0]], index=[t_930]), series])
     return series
 
 
 def render_price_chart(tickers: list[str], period: str) -> None:
-    # ── CSS ───────────────────────────────────────────────────────────────────
     st.markdown(
         """
         <style>
@@ -176,7 +170,6 @@ def render_price_chart(tickers: list[str], period: str) -> None:
         unsafe_allow_html=True,
     )
 
-    # ── Header ────────────────────────────────────────────────────────────────
     col_title, col_btn = st.columns([6, 1])
     with col_title:
         label = "Today" if period == "1D" else period
@@ -184,7 +177,6 @@ def render_price_chart(tickers: list[str], period: str) -> None:
     with col_btn:
         manual_refresh = st.button("↻ Refresh", key="manual_refresh")
 
-    # ── Auto-refresh ──────────────────────────────────────────────────────────
     now = datetime.now()
     if "last_refresh" not in st.session_state:
         st.session_state["last_refresh"] = now
@@ -195,16 +187,14 @@ def render_price_chart(tickers: list[str], period: str) -> None:
         fetch_prices.clear()
         st.session_state["last_refresh"] = now
 
-    # ── Fetch ─────────────────────────────────────────────────────────────────
     now_et   = datetime.now(ET)
     today_et = now_et.date()
+    interval = CHART_INTERVAL[period]
 
     if period == "1D":
         prices_raw = fetch_intraday(tickers)
-    elif period in ("5D", "10D"):
-        prices_raw = fetch_prices(tickers, PERIOD_MAP[period], interval="5m")
     else:
-        prices_raw = fetch_prices(tickers, PERIOD_MAP[period], interval="1d")
+        prices_raw = fetch_prices(tickers, PERIOD_MAP[period], interval=interval)
 
     last_updated = st.session_state["last_refresh"].strftime("%H:%M:%S")
     st.caption(f"Last updated: {last_updated}  ·  Source: yfinance (~15min delay)")
@@ -213,13 +203,12 @@ def render_price_chart(tickers: list[str], period: str) -> None:
         st.warning("No data available for the selected tickers and period.")
         return
 
-    # Normalize index to ET for tick/range calculation
+    # Normalize to ET for tick calculation
     prices_et = prices_raw.copy()
     if prices_et.index.tz is None:
         prices_et.index = prices_et.index.tz_localize("UTC")
     prices_et.index = prices_et.index.tz_convert(ET)
 
-    # ── Build figure ──────────────────────────────────────────────────────────
     fig      = go.Figure()
     has_data = False
 
@@ -252,7 +241,6 @@ def render_price_chart(tickers: list[str], period: str) -> None:
         st.warning("No data available for the selected tickers and period.")
         return
 
-    # ── Layout ────────────────────────────────────────────────────────────────
     xaxis_cfg = _get_xaxis_config(period, now_et, prices_et)
 
     fig.update_layout(
@@ -280,6 +268,5 @@ def render_price_chart(tickers: list[str], period: str) -> None:
 
     st.plotly_chart(fig, use_container_width=True, config={"displayModeBar": False})
 
-    # ── Countdown ─────────────────────────────────────────────────────────────
     remaining = max(0, 300 - int(seconds_since))
     st.caption(f"Next auto-refresh in {remaining // 60}m {remaining % 60}s")
