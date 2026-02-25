@@ -26,6 +26,7 @@ def _ticks_from_data(prices_et: pd.DataFrame, n_days: int) -> tuple[list, list]:
     """
     Derive one tick per trading day from the actual data index.
     Picks the first timestamp of each calendar date present in the data.
+    Returns only the last n_days entries.
     """
     if prices_et.empty:
         return [], []
@@ -34,8 +35,15 @@ def _ticks_from_data(prices_et: pd.DataFrame, n_days: int) -> tuple[list, list]:
     if idx.tz is None:
         idx = idx.tz_localize("UTC").tz_convert(ET)
 
+    # Only consider market hours (9:30–16:00) to avoid pre/post-market dates
+    market_idx = idx[(idx.hour > 9) | ((idx.hour == 9) & (idx.minute >= 30))]
+    market_idx = market_idx[market_idx.hour < 16]
+
+    if len(market_idx) == 0:
+        market_idx = idx  # fallback: use all
+
     dates_first: dict = {}
-    for ts in idx:
+    for ts in market_idx:
         d = ts.date()
         if d not in dates_first:
             dates_first[d] = ts
@@ -50,9 +58,14 @@ def _get_xaxis_config(period: str, now_et: datetime,
                       prices_et: pd.DataFrame) -> dict:
     """
     Returns Plotly xaxis config.
-    For intraday periods (1D, 5D, 10D): adds rangebreaks to hide
-    after-hours gaps and weekend gaps — just like Yahoo Finance.
+
+    IMPORTANT:
+    - rangebreaks with pattern="hour" only works correctly with intraday (5m) data.
+    - For daily data (1M, 3M, 6M, 1Y), only use bounds=["sat","mon"] — no hour breaks.
+    - For 5D/10D intraday: use rangebreaks to hide weekends only (no hour bounds,
+      because hour bounds can truncate the visible data range unexpectedly).
     """
+
     if period == "1D":
         return dict(
             tickformat="%-I %p",
@@ -62,31 +75,43 @@ def _get_xaxis_config(period: str, now_et: datetime,
                 now_et.replace(hour=9,  minute=30, second=0, microsecond=0),
                 now_et.replace(hour=16, minute=0,  second=0, microsecond=0),
             ],
-            # Hide before 9:30 AM and after 4:00 PM
             rangebreaks=[
-                dict(bounds=["sat", "mon"]),                    # weekends
-                dict(bounds=[16, 9.5], pattern="hour"),         # after-hours
+                dict(bounds=["sat", "mon"]),
+                dict(bounds=[16, 9.5], pattern="hour"),
             ],
         )
 
     elif period in ("5D", "10D"):
         n = 5 if period == "5D" else 10
         tick_vals, tick_text = _ticks_from_data(prices_et, n)
-        return dict(
+
+        # For 5D/10D: hide weekends but NOT hour-based breaks.
+        # Hour-based breaks on 5m data cause visual truncation when the
+        # rangebreak bounds don't align with the tz-aware timestamps.
+        # Instead, we set a hard x-range from first to last tick.
+        x_range = None
+        if tick_vals:
+            # Extend range slightly beyond last tick to show full last day
+            x_start = tick_vals[0]
+            x_end   = prices_et.index[-1] if not prices_et.empty else tick_vals[-1]
+            x_range = [x_start, x_end]
+
+        cfg = dict(
             tickvals=tick_vals,
             ticktext=tick_text,
             tickangle=0,
-            # Key fix: remove weekend gaps and after-hours gaps
             rangebreaks=[
-                dict(bounds=["sat", "mon"]),            # hide Sat & Sun
-                dict(bounds=[16, 9.5], pattern="hour"), # hide outside market hours
+                dict(bounds=["sat", "mon"]),  # hide weekends only
             ],
         )
+        if x_range:
+            cfg["range"] = x_range
+        return cfg
 
     elif period == "1M":
         return dict(
             tickformat="%-m/%-d",
-            dtick=5 * 24 * 60 * 60 * 1000,
+            dtick=7 * 24 * 60 * 60 * 1000,   # weekly ticks
             tickangle=0,
             rangebreaks=[dict(bounds=["sat", "mon"])],
         )
@@ -115,7 +140,7 @@ def _get_xaxis_config(period: str, now_et: datetime,
             rangebreaks=[dict(bounds=["sat", "mon"])],
         )
 
-    else:  # 5Y, 10Y — weekly/monthly data, no rangebreaks needed
+    else:  # 5Y, 10Y — weekly/monthly candles, no rangebreaks needed
         return dict(
             tickformat="%Y",
             dtick="M12",
@@ -129,8 +154,10 @@ def _prepend_prev_close(series: pd.Series, now_et: datetime) -> pd.Series:
         return series
     prev_close = series.iloc[0]
     t_930 = now_et.replace(hour=9, minute=30, second=0, microsecond=0)
-    pre   = pd.Series([prev_close], index=[t_930])
-    return pd.concat([pre, series])
+    if t_930 < series.index[0]:
+        pre = pd.Series([prev_close], index=[t_930])
+        return pd.concat([pre, series])
+    return series
 
 
 def render_price_chart(tickers: list[str], period: str) -> None:
@@ -186,7 +213,7 @@ def render_price_chart(tickers: list[str], period: str) -> None:
         st.warning("No data available for the selected tickers and period.")
         return
 
-    # Normalize index to ET for tick calculation
+    # Normalize index to ET for tick/range calculation
     prices_et = prices_raw.copy()
     if prices_et.index.tz is None:
         prices_et.index = prices_et.index.tz_localize("UTC")
